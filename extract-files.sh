@@ -1,56 +1,54 @@
 #!/bin/bash
-#
-# Copyright (C) 2018 The LineageOS Project
-#
-# SPDX-License-Identifier: Apache-2.0
-#
 
-set -e
+#set -e
+export DEVICE=sdm710-common
+export VENDOR=xiaomi
 
-# Load extract_utils and do some sanity checks
-MY_DIR="${BASH_SOURCE%/*}"
-if [[ ! -d "$MY_DIR" ]]; then MY_DIR="$PWD"; fi
-
-LINEAGE_ROOT="$MY_DIR"/../../..
-
-HELPER="$LINEAGE_ROOT"/vendor/lineage/build/tools/extract_utils.sh
-if [ ! -f "$HELPER" ]; then
-    echo "Unable to find helper script at $HELPER"
+if [ $# -eq 0 ]; then
+  SRC=adb
+else
+  if [ $# -eq 1 ]; then
+    SRC=$1
+  else
+    echo "$0: bad number of arguments"
+    echo ""
+    echo "usage: $0 [PATH_TO_EXPANDED_ROM]"
+    echo ""
+    echo "If PATH_TO_EXPANDED_ROM is not specified, blobs will be extracted from"
+    echo "the device using adb pull."
     exit 1
+  fi
 fi
-. "$HELPER"
 
-# Default to sanitizing the vendor folder before extraction
-CLEAN_VENDOR=true
+BASE=../../../vendor/$VENDOR/$DEVICE/proprietary
+rm -rf $BASE/*
 
-while [ "$1" != "" ]; do
-    case $1 in
-        -n | --no-cleanup )     CLEAN_VENDOR=false
-                                ;;
-        -s | --section )        shift
-                                SECTION=$1
-                                CLEAN_VENDOR=false
-                                ;;
-        * )                     SRC=$1
-                                ;;
-    esac
-    shift
+for FILE in `egrep -v '(^#|^$)' proprietary-files.txt`; do
+  OLDIFS=$IFS IFS=":" PARSING_ARRAY=($FILE) IFS=$OLDIFS
+  FILE=`echo ${PARSING_ARRAY[0]} | sed -e "s/^-//g"`
+  DEST=${PARSING_ARRAY[1]}
+  if [ -z $DEST ]
+  then
+    DEST=$FILE
+  fi
+  DIR=`dirname $DEST`
+  if [ ! -d $BASE/$DIR ]; then
+    mkdir -p $BASE/$DIR
+  fi
+  # Try CM target first
+  if [ "$SRC" = "adb" ]; then
+    adb pull /system/$DEST $BASE/$DEST
+    # if file does not exist try OEM target
+    if [ "$?" != "0" ]; then
+        adb pull /system/$FILE $BASE/$DEST
+    fi
+  else
+    if [ -r $SRC/system/$DEST ]; then
+        cp $SRC/system/$DEST $BASE/$DEST
+    else
+        cp $SRC/system/$FILE $BASE/$DEST
+    fi
+  fi
 done
 
-if [ -z "$SRC" ]; then
-    SRC=adb
-fi
-
-# Initialize the helper for common device
-setup_vendor "$DEVICE_COMMON" "$VENDOR" "$LINEAGE_ROOT" true "$CLEAN_VENDOR"
-
-extract "$MY_DIR"/proprietary-files.txt "$SRC" "$SECTION"
-
-if [ -s "$MY_DIR"/../$DEVICE/proprietary-files.txt ]; then
-    # Reinitialize the helper for device
-    setup_vendor "$DEVICE" "$VENDOR" "$LINEAGE_ROOT" false "$CLEAN_VENDOR"
-
-    extract "$MY_DIR"/../$DEVICE/proprietary-files.txt "$SRC" "$SECTION"
-fi
-
-"$MY_DIR"/setup-makefiles.sh
+./setup-makefiles.sh
